@@ -12,7 +12,24 @@ const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt=d=>d?new Date(d).toLocaleString('ko-KR'):'-';
 let client=null, user=null, sessions=[], busy=false, mode='login', openDetails={}, closedExpanded=false;
-let slotSession=null; // browser session only
+let slotSession=null;
+const SLOT_KEY='hamkke_instructor_slot_login_v3';
+function saveSlotSession(value){
+ localStorage.removeItem(SLOT_KEY);sessionStorage.removeItem(SLOT_KEY);
+ if(value){(document.getElementById('remember').checked?localStorage:sessionStorage).setItem(SLOT_KEY,JSON.stringify(value));}
+}
+function clearSlotSession(){localStorage.removeItem(SLOT_KEY);sessionStorage.removeItem(SLOT_KEY);slotSession=null;}
+async function restoreSlotSession(){
+ const raw=sessionStorage.getItem(SLOT_KEY)||localStorage.getItem(SLOT_KEY);if(!raw)return false;
+ let saved;try{saved=JSON.parse(raw)}catch{clearSlotSession();return false}
+ if(!saved?.access_token){clearSlotSession();return false}
+ const res=await fetch(API+'hamkke-slot-status',{method:'POST',headers:{'Content-Type':'application/json','apikey':PUBLISHABLE_KEY,'Authorization':'Bearer '+saved.access_token}});
+ if(!res.ok){clearSlotSession();return false}
+ const data=await res.json();if(!data.success){clearSlotSession();return false}
+ slotSession=saved;
+ user={id:data.instructor.id,email:data.instructor.login_id,user_metadata:{display_name:data.instructor.login_id}};
+ await refresh();return true;
+}
 function notify(msg,err=false){$('feedback').className=err?'error':'success';$('feedback').textContent=msg}
 function checkConfig(){if(PUBLISHABLE_KEY.startsWith('REPLACE_')){notify('설정 필요: HTML의 PUBLISHABLE_KEY에 Supabase publishable/anon 키를 입력하세요.',true);return false}return true}
 function setBusy(v){busy=v;document.querySelectorAll('button').forEach(b=>b.disabled=v)}
@@ -31,18 +48,25 @@ $('authForm').onsubmit=e=>{e.preventDefault();run(async()=>{
  const password=$('password').value;
  if($('loginType').value==='admin'){
   const {error}=await client.auth.signInWithPassword({email:$('email').value.trim(),password});if(error)throw error;
-  slotSession=null;await loadUser();
+  clearSlotSession();await loadUser();
  }else{
   const res=await fetch(API+'hamkke-slot-login',{method:'POST',headers:{'Content-Type':'application/json','apikey':PUBLISHABLE_KEY},body:JSON.stringify({login_id:$('slotSelect').value,password})});
   const data=await res.json();
   if(!res.ok){throw Error((data.error||'로그인 실패')+(data.available_accounts?.length?' 사용 가능: '+data.available_accounts.join(', '):''))}
   slotSession={access_token:data.access_token,expires_at:Date.now()+data.expires_in*1000};
+  saveSlotSession(slotSession);
   user={id:data.instructor.id,email:data.instructor.login_id,user_metadata:{display_name:data.instructor.login_id}};
   await refresh();
  }
  $('password').value='';notify('로그인되었습니다.');
 })};
-$('logoutBtn').onclick=()=>run(async()=>{if(!slotSession){const {error}=await client.auth.signOut();if(error)throw error;}slotSession=null;user=null;sessions=[];render();notify('로그아웃되었습니다.')});
+$('logoutBtn').onclick=()=>run(async()=>{
+ if(slotSession){
+  const res=await fetch(API+'hamkke-slot-logout',{method:'POST',headers:{'Content-Type':'application/json','apikey':PUBLISHABLE_KEY,'Authorization':'Bearer '+slotSession.access_token}});
+  const data=await res.json();if(!res.ok||!data.success)throw Error(data.error||'로그아웃 처리 실패');
+ }else{const {error}=await client.auth.signOut();if(error)throw error;}
+ clearSlotSession();user=null;sessions=[];render();notify('로그아웃되었습니다.');
+});
 $('refreshBtn').onclick=()=>run(refresh);
 $('createForm').onsubmit=e=>{e.preventDefault();run(async()=>{const name=$('sessionName').value.trim();if(!name)throw Error('교육명을 입력하세요.');await api('create-session',{session_name:name});$('sessionName').value='';await refresh();notify('교육이 생성되었습니다.')})};
 function duration(s){if(!s.expires_at)return '';const seconds=Math.max(0,Math.ceil((new Date(s.expires_at)-Date.now())/1000));const h=String(Math.floor(seconds/3600)).padStart(2,'0'),m=String(Math.floor(seconds%3600/60)).padStart(2,'0'),sec=String(seconds%60).padStart(2,'0');return `<div class="countdown ${seconds<=600?'urgent':''}" data-expires="${esc(s.expires_at)}">교육세션 종료까지 ${h}:${m}:${sec} 남음</div>`}
@@ -54,6 +78,8 @@ async function loadUser(){const {data:{user:current},error}=await client.auth.ge
 $('sessionList').onclick=e=>{const btn=e.target.closest('[data-act]');if(!btn)return;const act=btn.dataset.act;if(act==='toggle-closed'){closedExpanded=!closedExpanded;render();return}const s=sessions.find(x=>x.id===btn.dataset.id);if(!s||s.instructor_id!==user?.id)return;if(act==='qr'){openDetails[s.id]=openDetails[s.id]==='qr'?null:'qr';render();return}if(act==='students'){openDetails[s.id]='students';run(async()=>{await showStudents(s)});return}if(act==='start')run(async()=>{if(!confirm('교육을 시작하시겠습니까? 시작 시각부터 2시간 동안 운영됩니다.'))return;await api('start-session',{session_id:s.id});await refresh();notify('교육이 시작되었습니다.')});if(act==='extend')run(async()=>{await api('extend-session',{session_id:s.id});await refresh();notify('교육 종료 시각이 1시간 연장되었습니다.')});if(act==='close')run(async()=>{if(!confirm('교육을 종료하면 교육생 계좌와 거래내역이 삭제됩니다. 종료하시겠습니까?'))return;await api('close-session',{session_id:s.id});delete openDetails[s.id];await refresh();notify('교육 종료가 완료되었습니다.')})};
 async function showStudents(s){const r=await api('list-session-students',{session_id:s.id});const el=$('detail-'+s.id);if(!el||openDetails[s.id]!=='students')return;const list=r.students||[];el.classList.remove('hide');el.innerHTML=`<div class="row"><strong>교육생 ${list.length}명</strong><button class="btn secondary" data-act="students" data-id="${s.id}">새로고침</button></div><div class="student-wrap"><table class="student-table"><thead><tr><th>교육생</th><th>계좌번호</th><th>잔액</th></tr></thead><tbody>${list.map(x=>`<tr><td>${esc(x.holder_name)}</td><td>${esc(x.account_number)}</td><td>${Number(x.balance).toLocaleString('ko-KR')}원</td></tr>`).join('')}</tbody></table></div>`}
 function showQR(s){const el=$('detail-'+s.id);if(!el)return;el.classList.remove('hide');if(!s.join_code){el.textContent='참여 코드가 없습니다.';return}const u=new URL(STUDENT_URL);u.searchParams.set('join_code',s.join_code);const link=u.toString();el.innerHTML=`<div class="qrbox"><h3>교육생 참여 안내</h3><div class="code" style="font-size:25px">${esc(s.join_code)}</div><img alt="참여 QR" src="https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(link)}"><p class="link">${esc(link)}</p><div class="actions" style="justify-content:center"><button class="btn secondary" data-copy="link">링크 복사</button><button class="btn outline" data-copy="code">코드 복사</button><button class="btn outline" data-print="1">인쇄</button></div></div>`;el.querySelectorAll('[data-copy]').forEach(b=>b.onclick=async()=>{const value=b.dataset.copy==='code'?s.join_code:link;try{await navigator.clipboard.writeText(value);notify('복사했습니다.')}catch{prompt('복사하세요.',value)}});el.querySelector('[data-print]').onclick=()=>window.print()}
-async function init(){if(!window.supabase){notify('Supabase 라이브러리를 불러오지 못했습니다.',true);return}if(!checkConfig())return;client=window.supabase.createClient(PROJECT,PUBLISHABLE_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});const {data:{session}}=await client.auth.getSession();if(session)try{await loadUser()}catch(e){notify(e.message,true)}else render();client.auth.onAuthStateChange((event)=>{if(event==='SIGNED_OUT'){user=null;sessions=[];render()}});setInterval(tick,1000);setInterval(()=>{if(user&&!document.hidden&&!busy)refresh().catch(()=>{})},30000)}
+async function init(){if(!window.supabase){notify('Supabase 라이브러리를 불러오지 못했습니다.',true);return}if(!checkConfig())return;client=window.supabase.createClient(PROJECT,PUBLISHABLE_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});let restored=false;
+try{restored=await restoreSlotSession()}catch(e){notify('로그인 복원 실패: '+e.message,true)}
+if(!restored){const {data:{session}}=await client.auth.getSession();if(session)try{await loadUser()}catch(e){notify(e.message,true)}else render();}client.auth.onAuthStateChange((event)=>{if(event==='SIGNED_OUT'&&!slotSession){user=null;sessions=[];render()}});setInterval(tick,1000);setInterval(()=>{if(user&&!document.hidden&&!busy)refresh().catch(()=>{})},30000)}
 init();
 </script></body></html>

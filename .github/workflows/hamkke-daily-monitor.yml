@@ -1,7 +1,7 @@
 name: Hamkke Bank daily monitor
 on:
   schedule:
-    - cron: '10 0 * * *'  # 09:10 KST, daily
+    - cron: '10 0 * * *' # 09:10 KST, daily
   workflow_dispatch:
 permissions:
   contents: read
@@ -11,10 +11,11 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - name: Check Supabase and summarize yesterday's classes
+      - name: Check Supabase and email yesterday's classes
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
           SUPABASE_MONITOR_EMAIL: ${{ secrets.SUPABASE_MONITOR_EMAIL }}
           SUPABASE_MONITOR_PASSWORD: ${{ secrets.SUPABASE_MONITOR_PASSWORD }}
+          NAVER_SMTP_PASSWORD: ${{ secrets.NAVER_SMTP_PASSWORD }}
         run: python3 scripts/daily_monitor.py

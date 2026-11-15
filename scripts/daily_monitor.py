@@ -1,3 +1,35 @@
+import json, os, sys, urllib.request, urllib.error
+import smtplib, ssl
+from email.message import EmailMessage
+from datetime import datetime, timedelta, timezone
+
+BASE = os.getenv('SUPABASE_URL', '').rstrip('/')
+KEY = os.getenv('SUPABASE_PUBLISHABLE_KEY', '')
+EMAIL = os.getenv('SUPABASE_MONITOR_EMAIL', '')
+PASSWORD = os.getenv('SUPABASE_MONITOR_PASSWORD', '')
+SMTP_PASSWORD = os.getenv('NAVER_SMTP_PASSWORD', '')
+MAIL_ADDRESS = 'youwany@naver.com'
+KST = timezone(timedelta(hours=9))
+
+
+def post(url, data, headers=None):
+    payload = json.dumps(data).encode('utf-8')
+    req = urllib.request.Request(url, payload, {'Content-Type': 'application/json', **(headers or {})}, method='POST')
+    try:
+        with urllib.request.urlopen(req, timeout=25) as res:
+            return json.load(res)
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f'HTTP {e.code} from {url.split("/")[-1]}') from e
+
+
+def send_email(subject, body):
+    if not SMTP_PASSWORD:
+        raise RuntimeError('Missing NAVER_SMTP_PASSWORD GitHub Actions secret')
+    message = EmailMessage()
+    message['Subject'] = subject
+    message['From'] = MAIL_ADDRESS
+    message['To'] = MAIL_ADDRESS
+    message.set_content(body)
     with smtplib.SMTP_SSL('smtp.naver.com', 465, context=ssl.create_default_context(), timeout=30) as smtp:
         smtp.login(MAIL_ADDRESS, SMTP_PASSWORD)
         smtp.send_message(message)

@@ -141,6 +141,7 @@ try{const stored=JSON.parse(sessionStorage.getItem(KEY));if(stored)state={...emp
 // 함께은행 다중 사용자 통신 계층 (v7.2 UI/초기 거래 생성 함수 보존)
 const API='https://xztotfptuanconzxofya.supabase.co/functions/v1/';
 let joinCode=new URLSearchParams(location.search).get('join_code')||sessionStorage.getItem('hamkke-join-code')||'';
+let currentSessionName='';
 let remoteBusy=false;
 let ownAccounts=[];let accountPins=state.accountPins||{};let newAccountPin='';let accountPickerOpen=false,accountSwitchDestination='home';
 function displaySessionName(name){currentSessionName=String(name||'').trim().slice(0,20);const el=document.getElementById('currentSessionName');if(el){el.textContent=currentSessionName?'| '+currentSessionName:'';el.title=currentSessionName;}}
